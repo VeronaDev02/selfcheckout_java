@@ -5,6 +5,7 @@ import com.grupoverona.selfcheckout.network.UdpListener;
 
 import javafx.application.Platform;
 import javafx.scene.control.TextArea;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.AnchorPane;
 
 /**
@@ -28,6 +29,14 @@ public class CameraQuadrant {
     private VlcjMediaHandler mediaHandler;
     private UdpListener udpListener;
 
+    // Interface para callback de evento de duplo clique
+    public interface DoubleClickCallback {
+        void onDoubleClick(CameraQuadrant quadrant);
+    }
+
+    // Callback para evento de duplo clique
+    private DoubleClickCallback doubleClickCallback;
+
     /**
      * Cria um novo quadrante de câmera
      * @param id Identificador do quadrante (0-3)
@@ -40,6 +49,36 @@ public class CameraQuadrant {
         this.logPane = logPane;
 
         initializeLogArea();
+        setupDoubleClickHandler();
+    }
+
+    /**
+     * Configura o handler para detectar o duplo clique nos painéis
+     */
+    private void setupDoubleClickHandler() {
+        // Adiciona handler de duplo clique no painel de vídeo
+        videoPane.setOnMouseClicked(this::handleDoubleClick);
+
+        // Adiciona handler de duplo clique no painel de log
+        logPane.setOnMouseClicked(this::handleDoubleClick);
+    }
+
+    /**
+     * Processa evento de duplo clique
+     */
+    private void handleDoubleClick(MouseEvent event) {
+        if (event.getClickCount() == 2 && doubleClickCallback != null) {
+            doubleClickCallback.onDoubleClick(this);
+            appendToLog("Duplo clique detectado no quadrante " + id);
+        }
+    }
+
+    /**
+     * Define o callback para evento de duplo clique
+     * @param callback O callback a ser chamado quando ocorrer duplo clique
+     */
+    public void setDoubleClickCallback(DoubleClickCallback callback) {
+        this.doubleClickCallback = callback;
     }
 
     /**
@@ -195,5 +234,19 @@ public class CameraQuadrant {
      */
     public int getId() {
         return id;
+    }
+
+    /**
+     * @return O painel de vídeo deste quadrante
+     */
+    public AnchorPane getVideoPane() {
+        return videoPane;
+    }
+
+    /**
+     * @return O painel de log deste quadrante
+     */
+    public AnchorPane getLogPane() {
+        return logPane;
     }
 }

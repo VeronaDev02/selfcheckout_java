@@ -43,6 +43,13 @@ public class MainController {
     // Lista dos quadrantes de câmeras (máximo 4)
     private final List<CameraQuadrant> quadrants = new ArrayList<>(4);
 
+    // Estado de exibição de quadrante em tela cheia
+    private boolean singleQuadrantMode = false;
+    private int fullscreenQuadrantIndex = -1;
+
+    // Referências para os GridPanes originais dos quadrantes
+    private final List<GridPane> originalQuadrantGrids = new ArrayList<>(4);
+
     /**
      * Define o estágio principal
      */
@@ -141,19 +148,31 @@ public class MainController {
      */
     private void setupQuadrants() {
         try {
+            // Limpa listas para evitar duplicação
+            originalQuadrantGrids.clear();
+            quadrants.clear();
+
             // Cria quadrantes em uma grade 2x2
             for (int row = 0; row < 2; row++) {
                 for (int col = 0; col < 2; col++) {
                     GridPane quadrantGrid = findQuadrantGridPane(row, col);
 
                     if (quadrantGrid != null) {
+                        // Salva referência ao grid original
+                        originalQuadrantGrids.add(quadrantGrid);
+
                         // Obtém panes para vídeo e log
                         AnchorPane logPane = (AnchorPane) quadrantGrid.getChildren().get(0);
                         AnchorPane videoPane = (AnchorPane) quadrantGrid.getChildren().get(1);
 
                         // Cria o quadrante
                         int index = row * 2 + col;
-                        quadrants.add(new CameraQuadrant(index, videoPane, logPane));
+                        CameraQuadrant quadrant = new CameraQuadrant(index, videoPane, logPane);
+
+                        // Configura callback para evento de duplo clique
+                        quadrant.setDoubleClickCallback(this::toggleQuadrantFullscreen);
+
+                        quadrants.add(quadrant);
                         System.out.println("Quadrante " + index + " criado com sucesso!");
                     } else {
                         System.err.println("ERRO: GridPane não encontrado para quadrante [" + row + "," + col + "]");
@@ -162,6 +181,114 @@ public class MainController {
             }
         } catch (Exception e) {
             System.err.println("ERRO ao criar quadrantes: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Alterna o modo de visualização do quadrante (normal/tela cheia)
+     * @param quadrant O quadrante que recebeu duplo clique
+     */
+    private void toggleQuadrantFullscreen(CameraQuadrant quadrant) {
+        int quadrantIndex = quadrant.getId();
+        System.out.println("Alternando modo de exibição para o quadrante " + quadrantIndex);
+
+        if (singleQuadrantMode && fullscreenQuadrantIndex == quadrantIndex) {
+            // Se já estamos exibindo este quadrante em modo tela cheia, voltamos ao modo normal
+            restoreGridLayout();
+        } else {
+            // Caso contrário, exibimos este quadrante em modo tela cheia
+            showQuadrantFullscreen(quadrantIndex);
+        }
+    }
+
+    /**
+     * Exibe um quadrante específico em tela cheia
+     * @param quadrantIndex O índice do quadrante a ser exibido
+     */
+    private void showQuadrantFullscreen(int quadrantIndex) {
+        if (quadrantIndex < 0 || quadrantIndex >= quadrants.size()) {
+            System.err.println("Índice de quadrante inválido: " + quadrantIndex);
+            return;
+        }
+
+        try {
+            singleQuadrantMode = true;
+            fullscreenQuadrantIndex = quadrantIndex;
+
+            CameraQuadrant quadrant = quadrants.get(quadrantIndex);
+
+            // Salva referências às posições originais
+            GridPane originalGrid = originalQuadrantGrids.get(quadrantIndex);
+
+            // Remove todos os grids do grid principal
+            grid_quadrante.getChildren().clear();
+
+            // Adiciona apenas o grid do quadrante selecionado, preenchendo todo o espaço
+            grid_quadrante.add(originalGrid, 0, 0);
+
+            // Configura para ocupar todo o espaço (equivalente a colspan=2, rowspan=2)
+            GridPane.setColumnSpan(originalGrid, 2);
+            GridPane.setRowSpan(originalGrid, 2);
+
+            // Notifica o quadrante sobre a mudança de layout
+            Platform.runLater(() -> {
+                try {
+                    Thread.sleep(100); // Pequena pausa para o layout ser recalculado
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                quadrant.notifyLayoutChange();
+            });
+
+            System.out.println("Exibindo quadrante " + quadrantIndex + " em modo tela cheia");
+        } catch (Exception e) {
+            System.err.println("ERRO ao exibir quadrante em tela cheia: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Restaura o layout original da grade de quadrantes
+     */
+    private void restoreGridLayout() {
+        try {
+            // Limpa o grid principal
+            grid_quadrante.getChildren().clear();
+
+            // Readiciona todos os grids em suas posições originais
+            for (int i = 0; i < originalQuadrantGrids.size(); i++) {
+                GridPane gridPane = originalQuadrantGrids.get(i);
+
+                // Remove os spans expandidos
+                GridPane.setColumnSpan(gridPane, 1);
+                GridPane.setRowSpan(gridPane, 1);
+
+                // Calcula a posição na grade 2x2
+                int row = i / 2;
+                int col = i % 2;
+
+                // Adiciona no grid principal
+                grid_quadrante.add(gridPane, col, row);
+            }
+
+            // Atualiza estado
+            singleQuadrantMode = false;
+            fullscreenQuadrantIndex = -1;
+
+            // Notifica todos os quadrantes sobre a mudança de layout
+            Platform.runLater(() -> {
+                try {
+                    Thread.sleep(100); // Pequena pausa para o layout ser recalculado
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                quadrants.forEach(CameraQuadrant::notifyLayoutChange);
+            });
+
+            System.out.println("Restaurando layout original de quadrantes");
+        } catch (Exception e) {
+            System.err.println("ERRO ao restaurar layout original: " + e.getMessage());
             e.printStackTrace();
         }
     }
