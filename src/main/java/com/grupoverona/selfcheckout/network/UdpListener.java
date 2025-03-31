@@ -1,4 +1,6 @@
-package com.grupoverona.selfcheckout;
+package com.grupoverona.selfcheckout.network;
+
+import com.grupoverona.selfcheckout.util.MessageProcessor;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -8,39 +10,36 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
- * Classe que implementa um listener UDP para receber mensagens do PDV
- * Otimizada para reduzir consumo de CPU e energia
+ * Listener UDP para receber mensagens do PDV.
+ * Implementação otimizada para reduzir consumo de CPU e energia
+ * através de um socket compartilhado.
  */
 public class UdpListener {
+    // Porta padrão para comunicação PDV
+    private static final int DEFAULT_PORT = 38800;
 
     // Tamanho máximo do buffer para receber pacotes UDP
     private static final int MAX_PACKET_SIZE = 4096;
 
-    // Endereço IP e porta do PDV remoto
+    // Configuração do PDV
     private final String remoteIpAddress;
     private final int port;
 
-    // Socket UDP compartilhado para a porta 38800
+    // Socket UDP compartilhado
     private static DatagramSocket sharedSocket;
-
-    // Thread de escuta compartilhada
     private static Thread listenerThread;
-
-    // Flag atômica para controlar se a thread está rodando
     private static final AtomicBoolean threadRunning = new AtomicBoolean(false);
-
-    // Buffer reutilizável para recepção de dados
     private static byte[] sharedBuffer;
 
-    // Flag para indicar se esta instância está ativa
+    // Estado deste listener
     private boolean isActive = false;
 
-    // Callback para processar as mensagens recebidas
+    // Callback para processar mensagens recebidas
     private Consumer<String> messageCallback;
 
     /**
-     * Construtor
-     * @param ipAddress Endereço IP e porta no formato IP:PORTA
+     * Cria um listener para um PDV específico.
+     * @param ipAddress Endereço no formato "IP:PORTA" ou apenas "IP" (usa porta padrão)
      */
     public UdpListener(String ipAddress) {
         // Separa o IP e a porta (formato esperado: IP:PORTA)
@@ -50,15 +49,16 @@ public class UdpListener {
             this.port = Integer.parseInt(parts[1]);
         } else {
             this.remoteIpAddress = ipAddress;
-            this.port = 38800; // Porta padrão do PDV
+            this.port = DEFAULT_PORT;
         }
 
-        // Registra esta instância no registro central
+        // Registra no registro central de listeners
         UdpListenerRegistry.addListener(this);
     }
 
     /**
      * Define o callback para receber as mensagens
+     * @param callback Função que será chamada quando mensagens forem recebidas
      */
     public void setMessageCallback(Consumer<String> callback) {
         this.messageCallback = callback;
@@ -69,57 +69,56 @@ public class UdpListener {
      */
     public synchronized void start() {
         if (isActive) {
-            return; // Já está ativo
+            return; // Evita iniciar múltiplas vezes
         }
 
         isActive = true;
 
         try {
-            // Inicia o socket compartilhado se ainda não estiver rodando
+            // Inicia o socket compartilhado se necessário
             if (sharedSocket == null) {
                 initializeSharedSocket();
             }
 
             // Notifica que está ativo
-            if (messageCallback != null) {
-                messageCallback.accept("Ouvindo PDV: " + remoteIpAddress + " na porta " + port);
-            }
-
+            notifyClient("Ouvindo PDV: " + remoteIpAddress + " na porta " + port);
         } catch (Exception e) {
-            if (messageCallback != null) {
-                messageCallback.accept("Erro ao iniciar listener: " + e.getMessage());
-            }
+            notifyClient("Erro ao iniciar listener: " + e.getMessage());
             e.printStackTrace();
         }
     }
 
     /**
-     * Inicializa o socket compartilhado
+     * Envia mensagem para o cliente através do callback
+     */
+    private void notifyClient(String message) {
+        if (messageCallback != null) {
+            messageCallback.accept(message);
+        }
+    }
+
+    /**
+     * Inicializa o socket compartilhado usado por todos os listeners
      */
     private synchronized void initializeSharedSocket() throws IOException {
-        // Se já existe um socket, não faz nada
         if (sharedSocket != null) {
-            return;
+            return; // Já inicializado
         }
 
         try {
-            // Cria um novo socket na porta específica
-            sharedSocket = new DatagramSocket(38800);
-            // Aumenta o timeout para reduzir a frequência de verificações e economizar energia
+            // Cria um novo socket com configurações otimizadas
+            sharedSocket = new DatagramSocket(DEFAULT_PORT);
             sharedSocket.setSoTimeout(5000); // 5 segundos de timeout
 
-            // Inicializa o buffer compartilhado
+            // Inicializa buffer compartilhado
             sharedBuffer = new byte[MAX_PACKET_SIZE];
 
-            // Inicia a thread de escuta se não estiver rodando
+            // Inicia a thread de escuta
             if (threadRunning.compareAndSet(false, true)) {
                 startListenerThread();
             }
         } catch (IOException e) {
-            // Se não conseguir abrir o socket, propaga a exceção
-            if (messageCallback != null) {
-                messageCallback.accept("Erro ao abrir socket: " + e.getMessage());
-            }
+            notifyClient("Erro ao abrir socket: " + e.getMessage());
             throw e;
         }
     }
@@ -130,22 +129,19 @@ public class UdpListener {
     private void startListenerThread() {
         listenerThread = new Thread(() -> {
             try {
-                System.out.println("Iniciando thread de escuta UDP na porta 38800");
-
-                // Packet para receber os dados (reutilizando o buffer compartilhado)
+                System.out.println("Iniciando thread de escuta UDP na porta " + DEFAULT_PORT);
                 DatagramPacket packet = new DatagramPacket(sharedBuffer, sharedBuffer.length);
 
-                // Loop de recebimento
                 while (threadRunning.get()) {
                     try {
-                        // Aguarda pacote (com timeout de 5s configurado no socket)
+                        // Aguarda pacote (com timeout configurado)
                         sharedSocket.receive(packet);
 
-                        // Obtém o IP de origem
+                        // Obtém informações do remetente
                         String senderIp = packet.getAddress().getHostAddress();
                         int senderPort = packet.getPort();
 
-                        // Converte os dados para string
+                        // Converte dados para string
                         String message = new String(
                                 packet.getData(),
                                 packet.getOffset(),
@@ -153,24 +149,21 @@ public class UdpListener {
                                 StandardCharsets.UTF_8
                         ).trim();
 
-                        // Só processa se não estiver vazia (otimizado para reduzir processamento)
+                        // Processa apenas se não estiver vazia
                         if (!message.isEmpty()) {
-                            // Distribui a mensagem para todos os listeners interessados neste IP
                             deliverMessage(senderIp, senderPort, message);
                         }
 
-                        // Reinicia o packet para o próximo recebimento
+                        // Reinicia o packet para próximo recebimento
                         packet.setLength(sharedBuffer.length);
                     } catch (java.net.SocketTimeoutException e) {
-                        // Timeout de recepção - apenas continua o loop
-                        // Não faz nada aqui para reduzir processamento durante timeouts
+                        // Timeout normal, continua
                         continue;
                     } catch (IOException e) {
-                        if (threadRunning.get()) { // Só loga se ainda estiver rodando
+                        if (threadRunning.get()) {
                             System.err.println("Erro ao receber pacote: " + e.getMessage());
-                            // Pequena pausa para não sobrecarregar em caso de erros em sequência
                             try {
-                                Thread.sleep(1000);
+                                Thread.sleep(1000); // Evita loop de erro intensivo
                             } catch (InterruptedException ie) {
                                 Thread.currentThread().interrupt();
                                 break;
@@ -179,46 +172,47 @@ public class UdpListener {
                     }
                 }
             } finally {
-                // Fecha o socket quando a thread terminar
-                if (sharedSocket != null && !sharedSocket.isClosed()) {
-                    sharedSocket.close();
-                    sharedSocket = null;
-                }
-                System.out.println("Thread de escuta UDP encerrada");
+                closeSocket();
             }
         }, "UDP-Listener-Thread");
 
-        // Configura a thread como daemon para que não impeça o JVM de terminar
+        // Configurações para otimização
         listenerThread.setDaemon(true);
-
-        // Prioridade mais baixa para reduzir consumo de CPU/energia
         listenerThread.setPriority(Thread.MIN_PRIORITY);
-
         listenerThread.start();
     }
 
     /**
-     * Entrega a mensagem para todos os listeners interessados
+     * Fecha o socket compartilhado
+     */
+    private static synchronized void closeSocket() {
+        if (sharedSocket != null && !sharedSocket.isClosed()) {
+            sharedSocket.close();
+            sharedSocket = null;
+            System.out.println("Socket UDP encerrado");
+        }
+    }
+
+    /**
+     * Distribui mensagens recebidas para os listeners interessados
      */
     private static void deliverMessage(String senderIp, int senderPort, String message) {
         UdpListener[] listeners = UdpListenerRegistry.getActiveListeners();
-
         boolean messageDelivered = false;
+        String processedMessage = null;
 
         for (UdpListener listener : listeners) {
             if (listener.isActive && listener.remoteIpAddress.equals(senderIp)) {
-                // Apenas entrega se o IP corresponder
                 if (listener.messageCallback != null) {
-                    // Processa a mensagem apenas uma vez e reutiliza
+                    // Processa a mensagem apenas uma vez para economizar processamento
                     if (!messageDelivered) {
                         String senderInfo = senderIp + ":" + senderPort;
-                        String processedMessage = MessageProcessor.processUdpMessage(senderInfo, message);
+                        processedMessage = MessageProcessor.processUdpMessage(senderInfo, message);
                         listener.messageCallback.accept(processedMessage);
                         messageDelivered = true;
                     } else {
-                        // Se já tiver processado a mensagem para outro listener do mesmo IP
-                        // só reutiliza a mensagem processada
-                        listener.messageCallback.accept("Recebido de " + senderIp + ":" + senderPort + ": " + message);
+                        // Reutiliza a mensagem já processada
+                        listener.messageCallback.accept(processedMessage);
                     }
                 }
             }
@@ -234,19 +228,33 @@ public class UdpListener {
         }
 
         isActive = false;
-
-        if (messageCallback != null) {
-            messageCallback.accept("Listener para " + remoteIpAddress + " encerrado");
-        }
-
-        // Remove do registro
+        notifyClient("Listener para " + remoteIpAddress + " encerrado");
         UdpListenerRegistry.removeListener(this);
 
-        // Verifica se ainda há listeners ativos antes de encerrar a thread
+        // Verifica se ainda há listeners ativos
         if (UdpListenerRegistry.getActiveListeners().length == 0) {
             threadRunning.set(false);
         }
+    }
 
-        System.out.println("Listener para " + remoteIpAddress + " encerrado");
+    /**
+     * @return O endereço IP remoto deste listener
+     */
+    public String getRemoteIpAddress() {
+        return remoteIpAddress;
+    }
+
+    /**
+     * @return A porta deste listener
+     */
+    public int getPort() {
+        return port;
+    }
+
+    /**
+     * @return Se este listener está ativo
+     */
+    public boolean isActive() {
+        return isActive;
     }
 }

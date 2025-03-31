@@ -1,4 +1,4 @@
-package com.grupoverona.selfcheckout;
+package com.grupoverona.selfcheckout.network;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
